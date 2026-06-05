@@ -19,45 +19,38 @@ make dev
 
 ## Getting Started (GPU Node Deployment)
 
-Follow these instructions to deploy the system on the VSSC RHEL 9 VM with NVIDIA A40 GPUs.
+### 1. Model Preparation
+The system relies on huge LLM and embedding models which can be slow to download via Docker. We provide a blazing fast setup script that detects existing models or downloads them using parallel connections.
 
-### 1. Clone the Repository
-Pull the code directly from Git onto your GPU server:
-```bash
-git clone https://github.com/SreehariniJ/Vision.git
-cd Vision
-```
-
-### 2. Environment Configuration
-Copy the sample environment file.
-```bash
-cp .env.example .env
-```
-Open `.env` and fill in any required passwords. 
-
-**IMPORTANT**: If your guide has **already downloaded** the required HuggingFace models to a specific folder on the server (e.g. `/mnt/data/vssc-models`), edit the `.env` file and set the `HF_HOME_HOST` variable to that path:
-```env
-HF_HOME_HOST=/mnt/data/vssc-models
-```
-*(If you are downloading the models yourself, leave this as the default `~/.cache/huggingface`)*
-
-### 3. Model Preparation
-The system relies on huge LLM and embedding models which can be slow to download via Docker. Run the provided setup script. It will automatically detect if models exist, and if not, it will install a high-speed downloader to fetch them.
+1. Clone the repository on your GPU server.
+2. If your guide has **already downloaded** the models to a specific folder (e.g. `/mnt/data/models`), copy `.env.example` to `.env` and set `HF_HOME_HOST=/mnt/data/models`.
+3. Run the setup script:
 ```bash
 chmod +x setup_gpu_node.sh
 ./setup_gpu_node.sh
 ```
 
-### 4. Boot the System
+### 2. Boot the System
 Once the setup script finishes (or skips if it found existing models), boot the entire stack:
 ```bash
 docker compose up -d
 ```
 
-### 5. Access the Interface
-The ChatGPT-style frontend will be available at port 3002.
-- **UI:** `http://<YOUR_GPU_IP>:3002`
-- **Backend API:** `http://<YOUR_GPU_IP>:8000/docs`
+### 3. Final Polish: Removing the "(Open WebUI)" Title Suffix
+To ensure the application looks completely custom and professional without the Open WebUI branding in the browser tab:
+1. Open the application (`http://localhost:3002`) and log in as the admin.
+2. Go to **Admin Panel > Settings > General > Advanced**.
+3. Paste the following into the **Custom JS** box and hit Save:
+```javascript
+if (document.title.includes(" (Open WebUI)")) {
+    document.title = document.title.replace(" (Open WebUI)", "");
+}
+new MutationObserver(function(mutations) {
+    if (document.title.includes(" (Open WebUI)")) {
+        document.title = document.title.replace(" (Open WebUI)", "");
+    }
+}).observe(document.querySelector('title'), { childList: true, subtree: true });
+```
 
 ## Architecture Overview
 
