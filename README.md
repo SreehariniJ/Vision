@@ -17,28 +17,44 @@ make dev
 # http://localhost:3000
 ```
 
-## Getting Started (GPU Node Deployment)
+## Getting Started (GPU Linux Terminal)
 
-### 1. Model Preparation
-The system relies on huge LLM and embedding models which can be slow to download via Docker. We provide a blazing fast setup script that detects existing models or downloads them using parallel connections.
+Follow these exact steps in your Linux terminal to download, configure, and boot the entire AI backend:
 
-1. Clone the repository on your GPU server.
-2. If your guide has **already downloaded** the models to a specific folder (e.g. `/mnt/data/models`), copy `.env.example` to `.env` and set `HF_HOME_HOST=/mnt/data/models`.
-3. Run the setup script:
+**Step 1: Clone the Project**
+```bash
+git clone https://github.com/SreehariniJ/Vision.git
+cd Vision
+```
+
+**Step 2: Setup Configuration**
+```bash
+cp .env.example .env
+```
+*(Optional: If your guide already downloaded the massive models for you into a folder like `/mnt/models`, type `nano .env` and change `HF_HOME_HOST=~/.cache/huggingface` to `HF_HOME_HOST=/mnt/models`)*
+
+**Step 3: Download Models**
+Run the fast setup script. It automatically detects if models exist or downloads them using high-speed parallel connections.
 ```bash
 chmod +x setup_gpu_node.sh
 ./setup_gpu_node.sh
 ```
 
-### 2. Boot the System
-Once the setup script finishes (or skips if it found existing models), boot the entire stack:
+**Step 4: Start the System**
+Once the setup script is complete, boot the entire stack in the background:
 ```bash
 docker compose up -d
 ```
 
-### 3. Final Polish: Removing the "(Open WebUI)" Title Suffix
+**Step 5: Access the Web Interface**
+Open your web browser and go to your server's IP address:
+`http://<YOUR_LINUX_SERVER_IP>:3002`
+
+---
+
+### Final Polish: Removing the "(Open WebUI)" Title Suffix
 To ensure the application looks completely custom and professional without the Open WebUI branding in the browser tab:
-1. Open the application (`http://localhost:3002`) and log in as the admin.
+1. Open the application and log in as the admin.
 2. Go to **Admin Panel > Settings > General > Advanced**.
 3. Paste the following into the **Custom JS** box and hit Save:
 ```javascript
