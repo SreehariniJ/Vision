@@ -1,0 +1,124 @@
+# ============================================================
+# Vision — Docker Compose Development Overrides (No GPU)
+# ============================================================
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   OR: make dev
+# ============================================================
+
+services:
+  # --------------------------------------------------------
+  # vLLM → replaced with mock OpenAI-compatible server
+  # --------------------------------------------------------
+  vllm:
+    image: python:3.11-slim
+    container_name: vision-vllm-mock
+    command: >
+      bash -c "
+        pip install fastapi uvicorn --quiet &&
+        python -c \"
+        import json, time, uuid
+        from fastapi import FastAPI, Request
+        from fastapi.responses import StreamingResponse
+        import uvicorn
+
+        app = FastAPI(title='Vision Mock LLM')
+
+        @app.get('/health')
+        async def health():
+            return {'status': 'ok', 'model': 'mock-model'}
+
+        @app.get('/v1/models')
+        async def models():
+            return {
+                'object': 'list',
+                'data': [{
+                    'id': 'vision-model',
+                    'object': 'model',
+                    'owned_by': 'vision-mock'
+                }]
+            }
+
+        @app.post('/v1/chat/completions')
+        async def chat(request: Request):
+            body = await request.json()
+            messages = body.get('messages', [])
+            last_msg = messages[-1]['content'] if messages else 'No message'
+            stream = body.get('stream', False)
+
+            mock_response = f'[MOCK LLM] Received: {last_msg[:100]}... This is a development mock response. Deploy with GPU for real inference.'
+
+            if stream:
+                async def generate():
+                    chunk_id = str(uuid.uuid4())
+                    for word in mock_response.split():
+                        data = {
+                            'id': chunk_id,
+                            'object': 'chat.completion.chunk',
+                            'choices': [{'index': 0, 'delta': {'content': word + ' '}, 'finish_reason': None}]
+                        }
+                        yield f'data: {json.dumps(data)}\n\n'
+                        time.sleep(0.05)
+                    done = {
+                        'id': chunk_id,
+                        'object': 'chat.completion.chunk',
+                        'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]
+                    }
+                    yield f'data: {json.dumps(done)}\n\n'
+                    yield 'data: [DONE]\n\n'
+                return StreamingResponse(generate(), media_type='text/event-stream')
+            else:
+                return {
+                    'id': str(uuid.uuid4()),
+                    'object': 'chat.completion',
+                    'choices': [{
+                        'index': 0,
+                        'message': {'role': 'assistant', 'content': mock_response},
+                        'finish_reason': 'stop'
+                    }],
+                    'usage': {'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30}
+                }
+
+        uvicorn.run(app, host='0.0.0.0', port=8001)
+        \"
+      "
+    ports:
+      - "8001:8001"
+    deploy:
+      resources: {}  # Override: no GPU reservation
+    environment:
+      - MOCK_MODE=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --------------------------------------------------------
+  # Embedding → CPU mode
+  # --------------------------------------------------------
+  embedding:
+    environment:
+      - DEVICE=cpu
+    deploy:
+      resources: {}  # Override: no GPU reservation
+
+  # --------------------------------------------------------
+  # Reranker → CPU mode
+  # --------------------------------------------------------
+  reranker:
+    environment:
+      - DEVICE=cpu
+    deploy:
+      resources: {}  # Override: no GPU reservation
+
+  # --------------------------------------------------------
+  # Backend → Debug mode
+  # --------------------------------------------------------
+  backend:
+    environment:
+      - DEBUG=true
+      - VLLM_BASE_URL=http://vllm:8001/v1
+    volumes:
+      - ./backend/app:/app/app:ro  # Hot reload in dev

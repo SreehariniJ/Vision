@@ -1,0 +1,480 @@
+# ============================================================
+# Vision — Docker Compose (Production with GPU)
+# ============================================================
+# Usage:
+#   docker compose up -d                    # Start all services
+#   make switch-model PROFILE=A             # Switch to 7B model
+#   make switch-model PROFILE=B             # Switch to 32B AWQ
+# ============================================================
+
+name: vision
+
+services:
+  # --------------------------------------------------------
+  # Reverse Proxy
+  # --------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: vision-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      openwebui:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # Frontend — OpenWebUI (ChatGPT-style interface)
+  # --------------------------------------------------------
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: vision-openwebui
+    restart: unless-stopped
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+    environment:
+      - OPENAI_API_BASE_URLS=http://backend:8000/v1
+      - OPENAI_API_KEYS=${OPENAI_API_KEY:-vision-internal-key}
+      - WEBUI_SECRET_KEY=${OPENWEBUI_SECRET_KEY:-change-me}
+      - WEBUI_NAME=Vision
+      - ENABLE_SIGNUP=true
+      - DEFAULT_USER_ROLE=user
+      - ENABLE_COMMUNITY_SHARING=false
+    volumes:
+      - openwebui-data:/app/backend/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # Backend API — FastAPI
+  # --------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vision-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      - PROJECT_NAME=${PROJECT_NAME:-vision}
+      - SECRET_KEY=${BACKEND_SECRET_KEY:-change-me}
+      - DEBUG=${BACKEND_DEBUG:-false}
+      - CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-["*"]}
+      # vLLM
+      - VLLM_BASE_URL=http://vllm:8001/v1
+      # Embedding
+      - EMBEDDING_URL=http://embedding:8003
+      # Reranker
+      - RERANKER_URL=http://reranker:8004
+      # Docling
+      - DOCLING_URL=http://docling:8005
+      # OCR
+      - OCR_URL=http://ocr:8006
+      # MySQL
+      - MYSQL_HOST=${MYSQL_HOST:-mysql}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-vision}
+      - MYSQL_USER=${MYSQL_USER:-vision}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-change-me}
+      # Qdrant
+      - QDRANT_HOST=${QDRANT_HOST:-qdrant}
+      - QDRANT_PORT=${QDRANT_PORT:-6333}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-vision_chunks}
+      # Neo4j
+      - NEO4J_URI=bolt://${NEO4J_HOST:-neo4j}:${NEO4J_BOLT_PORT:-7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-change-me}
+      # Redis
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      # MinIO
+      - MINIO_ENDPOINT=${MINIO_HOST:-minio}:${MINIO_PORT:-9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-change-me}
+      - MINIO_BUCKET=${MINIO_BUCKET:-vision-documents}
+      # Celery
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/1
+    volumes:
+      - backend-data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      neo4j:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # Celery Worker — Async Document Ingestion
+  # --------------------------------------------------------
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vision-celery-worker
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/1
+      - EMBEDDING_URL=http://embedding:8003
+      - DOCLING_URL=http://docling:8005
+      - OCR_URL=http://ocr:8006
+      - QDRANT_HOST=${QDRANT_HOST:-qdrant}
+      - QDRANT_PORT=${QDRANT_PORT:-6333}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-vision_chunks}
+      - NEO4J_URI=bolt://${NEO4J_HOST:-neo4j}:${NEO4J_BOLT_PORT:-7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-change-me}
+      - MYSQL_HOST=${MYSQL_HOST:-mysql}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-vision}
+      - MYSQL_USER=${MYSQL_USER:-vision}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-change-me}
+      - MINIO_ENDPOINT=${MINIO_HOST:-minio}:${MINIO_PORT:-9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-change-me}
+      - MINIO_BUCKET=${MINIO_BUCKET:-vision-documents}
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # vLLM — Model Serving (GPU)
+  # --------------------------------------------------------
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vision-vllm
+    restart: unless-stopped
+    ports:
+      - "${VLLM_PORT:-8001}:8001"
+    env_file:
+      - .env.active-model
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - VLLM_USAGE_SOURCE=production
+    command: >
+      --host 0.0.0.0
+      --port 8001
+      --model ${VLLM_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
+      --dtype ${VLLM_DTYPE:-bfloat16}
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+      --limit-mm-per-prompt ${VLLM_LIMIT_MM_PER_PROMPT:-image=4,video=2}
+      --trust-remote-code
+      --served-model-name vision-model
+      ${VLLM_QUANTIZATION:+--quantization ${VLLM_QUANTIZATION}}
+      ${VLLM_EXTRA_ARGS:-}
+    volumes:
+      - ${HF_HOME_HOST:-~/.cache/huggingface}:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # BGE-M3 Embedding Service (GPU)
+  # --------------------------------------------------------
+  embedding:
+    build:
+      context: ./services/embedding
+      dockerfile: Dockerfile
+    container_name: vision-embedding
+    restart: unless-stopped
+    ports:
+      - "${EMBEDDING_PORT:-8003}:8003"
+    environment:
+      - MODEL_NAME=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - DEVICE=${EMBEDDING_DEVICE:-cuda}
+      - BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-32}
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - ${HF_HOME_HOST:-~/.cache/huggingface}:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # BGE-Reranker-v2-M3 Service (GPU)
+  # --------------------------------------------------------
+  reranker:
+    build:
+      context: ./services/reranker
+      dockerfile: Dockerfile
+    container_name: vision-reranker
+    restart: unless-stopped
+    ports:
+      - "${RERANKER_PORT:-8004}:8004"
+    environment:
+      - MODEL_NAME=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - DEVICE=${RERANKER_DEVICE:-cuda}
+      - TOP_K=${RERANKER_TOP_K:-5}
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - ${HF_HOME_HOST:-~/.cache/huggingface}:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # Docling — Document Parsing Service
+  # --------------------------------------------------------
+  docling:
+    build:
+      context: ./services/docling
+      dockerfile: Dockerfile
+    container_name: vision-docling
+    restart: unless-stopped
+    ports:
+      - "${DOCLING_PORT:-8005}:8005"
+    environment:
+      - OCR_URL=http://ocr:8006
+    volumes:
+      - docling-cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # PaddleOCR Service
+  # --------------------------------------------------------
+  ocr:
+    build:
+      context: ./services/ocr
+      dockerfile: Dockerfile
+    container_name: vision-ocr
+    restart: unless-stopped
+    ports:
+      - "${OCR_PORT:-8006}:8006"
+    environment:
+      - OCR_LANG=${OCR_LANG:-en}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # Data Stores
+  # --------------------------------------------------------
+  mysql:
+    image: mysql:8
+    container_name: vision-mysql
+    restart: unless-stopped
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-change-me}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-vision}
+      - MYSQL_USER=${MYSQL_USER:-vision}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-change-me}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-change-me}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - vision-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: vision-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - vision-net
+
+  neo4j:
+    image: neo4j:5
+    container_name: vision-neo4j
+    restart: unless-stopped
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-change-me}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - ./scripts/init-neo4j.cypher:/var/lib/neo4j/import/init-neo4j.cypher:ro
+    networks:
+      - vision-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: vision-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-change-me} --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-me}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vision-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: vision-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-change-me}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - vision-net
+
+  # --------------------------------------------------------
+  # Observability
+  # --------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: vision-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - vision-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vision-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-change-me}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - vision-net
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  openwebui-data:
+  backend-data:
+  huggingface-cache:
+  docling-cache:
+  mysql-data:
+  qdrant-data:
+  neo4j-data:
+  neo4j-logs:
+  redis-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  vision-net:
+    driver: bridge

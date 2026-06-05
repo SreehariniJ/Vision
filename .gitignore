@@ -1,0 +1,87 @@
+# ========================
+# Vision — .gitignore
+# ========================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+
+# --- Environment & Secrets ---
+.env
+.env.local
+.env.production
+!.env.example
+!.env.profiles/*.env
+nginx/ssl/
+*.pem
+*.key
+*.crt
+*.csr
+
+# --- Model Weights (large files) ---
+models/
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.onnx
+*.pkl
+
+# --- Docker ---
+docker-compose.override.yml
+
+# --- Data Volumes (created by compose) ---
+data/
+volumes/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Testing ---
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- MinIO data ---
+minio-data/
+
+# --- Grafana ---
+grafana-data/
+
+# --- MySQL data ---
+mysql-data/
+
+# --- Neo4j data ---
+neo4j-data/
+
+# --- Qdrant data ---
+qdrant-data/
+
+# --- Redis data ---
+redis-data/

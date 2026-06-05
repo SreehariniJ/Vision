@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'fastapi-backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['backend:8000']
+
+  - job_name: 'vllm'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['vllm:8001']
+
+  - job_name: 'embedding'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['embedding:8003']
+
+  - job_name: 'reranker'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['reranker:8004']
+
+  - job_name: 'qdrant'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['qdrant:6333']
+
+  # Note: GPU monitoring assumes nvidia-smi exporter or DCGM is running on host
+  # If running DCGM on host port 9400:
+  # - job_name: 'dcgm-gpu'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:9400']
