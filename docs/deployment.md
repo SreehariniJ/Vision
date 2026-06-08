@@ -1,82 +1,147 @@
 # Deployment Guide
 
-This guide covers deploying the Vision RAG system on a RHEL 9 virtual machine equipped with an NVIDIA A40 (48GB VRAM) GPU.
+This guide is for final evaluation on RHEL/Fedora-family Linux GPU systems, including RHEL, Rocky Linux, AlmaLinux, and Fedora.
 
-## Prerequisites
+## Required Host Software
 
-1. **RHEL 9 Server** with internet access (for initial model download).
-2. **NVIDIA Driver** installed and verified via `nvidia-smi`.
-3. **Docker Engine & Docker Compose V2** (or Podman with `podman-compose`).
-   * *Note: If using Podman, ensure GPU passthrough is configured correctly using the `cdi` feature.*
-4. **NVIDIA Container Toolkit** installed to allow containers to access the GPU.
-5. **Git** and **Make**.
+Verify the host before launching:
 
-## Step 1: System Preparation
-
-Clone the repository to the VM:
 ```bash
-git clone <repository-url> vision
+cat /etc/os-release
+nvidia-smi
+docker --version
+docker compose version
+docker info
+```
+
+The deployment expects:
+
+- NVIDIA driver installed and visible through `nvidia-smi`
+- Docker Engine running
+- Docker Compose V2
+- NVIDIA Container Toolkit configured for Docker GPU access
+- Enough free disk space for Docker images, volumes, and the supplied models
+
+## Model Folder
+
+Default expected layout:
+
+```text
+vision/
+  models/
+    Qwen2.5-VL-7B-Instruct/
+    Qwen2.5-VL-32B-Instruct-AWQ/
+    bge-m3/
+    bge-reranker-v2-m3/
+```
+
+If the evaluator receives models as a separate folder, either copy that folder into the project as `vision/models` or set an absolute path in `.env`:
+
+```bash
+MODEL_ROOT=/path/to/models
+```
+
+The containers mount this folder read-only at `/models`.
+
+## First Launch
+
+```bash
 cd vision
-```
-
-Copy the environment template:
-```bash
 cp .env.example .env
-```
-**CRITICAL:** Edit `.env` and replace all `change-me` values with strong, secure passwords before proceeding.
-
-## Step 2: Download Models
-
-The system requires several large AI models. Download them to the local HuggingFace cache:
-```bash
-make download-models
-```
-*This step requires ~40GB of disk space and a stable internet connection.*
-
-## Step 3: Start the System
-
-Bring up the full stack using Docker Compose:
-```bash
+bash scripts/validate-deployment.sh
 make up
 ```
 
-This command will:
-1. Build the custom images (FastAPI, Docling, OCR, Embedding, Reranker).
-2. Initialize the databases (MySQL schemas, Neo4j constraints).
-3. Start the vLLM server with **Config A (Qwen2.5-VL-7B-Instruct)** by default.
+`make up` runs preflight validation and starts the stack with `docker compose up -d --build`.
 
-## Step 4: Verify Deployment
+If build-time downloads are not allowed on the evaluation machine, prebuild and transfer the Docker images before evaluation. The project folder plus model folder alone is enough for configuration, but Docker image pulls and Python package installation still require either internet access or preloaded images/caches.
 
-Check that all containers are running:
+## Readiness Checks
+
+Container status:
+
 ```bash
-make status
+docker compose ps
 ```
 
-Check the vLLM logs to ensure the model loaded successfully onto the GPU:
+Backend liveness:
+
 ```bash
-make logs-vllm
+curl -fsS http://localhost:8000/api/health
 ```
-*Look for "Application startup complete." and note the GPU memory allocation.*
 
-## Step 5: Initial Configuration
+Dependency readiness:
 
-1. Navigate to `http://<vm-ip>:3000` (OpenWebUI).
-2. The first user to register automatically becomes the **Admin**.
-3. Create your account.
-4. Go to **Settings > Connections** and verify that the OpenAI API Base URL is pointing to the backend (e.g., `http://backend:8000/v1`).
-5. Ensure the API Key matches the `OPENAI_API_KEY` set in your `.env` file.
+```bash
+curl -fsS http://localhost:8000/api/ready
+```
+
+Model server logs:
+
+```bash
+docker compose logs -f vllm
+```
+
+Look for vLLM startup completion and absence of model path errors.
+
+## Access URLs
+
+- OpenWebUI: `http://<host>:3000`
+- Backend API docs: `http://<host>:8000/docs`
+- Backend readiness: `http://<host>:8000/api/ready`
+- Grafana: `http://<host>:3001`
+- MinIO console: `http://<host>:9001`
 
 ## Switching Models
 
-To demonstrate the higher-quality quantized model:
+The default active profile is A.
+
 ```bash
+make switch-model PROFILE=A
 make switch-model PROFILE=B
 ```
-This stops the current vLLM container, updates the environment variables, and restarts vLLM with `Qwen2.5-VL-32B-Instruct-AWQ`. The frontend will automatically detect the new model once it finishes loading.
 
-## Monitoring
+The switch script validates that the selected packaged model directory exists, updates `.env.active-model`, and force-recreates the vLLM container.
 
-Access the Grafana dashboard to monitor system health:
-1. Navigate to `http://<vm-ip>/grafana/` (or port 3001 if bypassing Nginx).
-2. Login with credentials set in `.env` (`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`).
-3. View the "Vision System Health" dashboard.
+## Optional Smoke Test
+
+After all services are healthy:
+
+```bash
+python3 test_e2e.py
+```
+
+This uploads `test_documents/2_Simple_Text.pdf`, waits for ingestion to reach `indexed`, and runs a search query.
+
+## Troubleshooting
+
+Missing model folder:
+
+```bash
+bash scripts/validate-deployment.sh
+```
+
+Use the reported `MODEL_ROOT` and missing directory paths to fix placement.
+
+GPU not visible inside containers:
+
+```bash
+nvidia-smi
+docker info | grep -i nvidia
+docker compose logs embedding reranker vllm
+```
+
+SELinux bind mount issues:
+
+- The Compose file uses `:z` labels for host bind mounts.
+- If a custom `MODEL_ROOT` is used, keep it readable by the Docker daemon.
+
+Port conflicts:
+
+- The preflight reports common port conflicts.
+- Change the corresponding port variable in `.env` if needed.
+
+Slow first launch:
+
+- vLLM model loading can take several minutes.
+- Docling and PaddleOCR are pre-initialized during image build to avoid first-request surprises.

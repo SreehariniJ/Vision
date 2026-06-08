@@ -1,5 +1,5 @@
 # ============================================================
-# Vision — Docker Compose Development Overrides (No GPU)
+# Vision - Docker Compose Development Overrides (No GPU)
 # ============================================================
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -8,7 +8,7 @@
 
 services:
   # --------------------------------------------------------
-  # vLLM → replaced with mock OpenAI-compatible server
+  # vLLM replaced with mock OpenAI-compatible server
   # --------------------------------------------------------
   vllm:
     image: python:3.11-slim
@@ -96,7 +96,7 @@ services:
       start_period: 30s
 
   # --------------------------------------------------------
-  # Embedding → CPU mode
+  # Embedding CPU mode
   # --------------------------------------------------------
   embedding:
     environment:
@@ -105,7 +105,7 @@ services:
       resources: {}  # Override: no GPU reservation
 
   # --------------------------------------------------------
-  # Reranker → CPU mode
+  # Reranker CPU mode
   # --------------------------------------------------------
   reranker:
     environment:
@@ -114,7 +114,7 @@ services:
       resources: {}  # Override: no GPU reservation
 
   # --------------------------------------------------------
-  # Backend → Debug mode
+  # Backend debug mode
   # --------------------------------------------------------
   backend:
     environment:

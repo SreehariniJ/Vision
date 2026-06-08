@@ -1,6 +1,4 @@
-fastapi
-uvicorn[standard]
-python-multipart
-docling
-pydantic
-httpx
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+docling==2.98.0

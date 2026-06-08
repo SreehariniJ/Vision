@@ -1,45 +1,46 @@
-#!/bin/bash
-# ============================================================
-# Vision — Download Models
-# Run this script once on the GPU VM to pre-download models
-# ============================================================
+#!/usr/bin/env bash
+# Download required models into the local deployment model folder.
 
-set -e
+set -euo pipefail
 
-# Default HuggingFace cache directory used by vLLM container
-HF_CACHE_DIR=${HF_HOME:-~/.cache/huggingface}
+MODEL_ROOT=${MODEL_ROOT:-./models}
+MODEL_ROOT=$(realpath -m "$MODEL_ROOT")
 
 echo "========================================"
 echo " Vision - Model Downloader"
 echo "========================================"
-echo "This script will download the required models"
-echo "to your local huggingface cache: $HF_CACHE_DIR"
-echo "Ensure you have enough disk space (~60GB)."
+echo "Destination: $MODEL_ROOT"
+echo "Required free space: roughly 60 GB"
 echo ""
 
-# Check for huggingface-cli
-if ! command -v huggingface-cli &> /dev/null; then
-    echo "huggingface-cli not found. Installing..."
-    pip install -U "huggingface_hub[cli]"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is required to install/run huggingface-cli." >&2
+    exit 1
 fi
 
-# 1. Config A: Qwen2.5-VL-7B-Instruct (Unquantized)
-echo "[1/4] Downloading Qwen2.5-VL-7B-Instruct (~15GB)..."
-huggingface-cli download Qwen/Qwen2.5-VL-7B-Instruct --cache-dir "$HF_CACHE_DIR"
+if ! command -v huggingface-cli >/dev/null 2>&1; then
+    echo "Installing Hugging Face CLI..."
+    python3 -m pip install -U "huggingface_hub[cli]" hf_transfer
+fi
 
-# 2. Config B: Qwen2.5-VL-32B-Instruct-AWQ (Quantized)
-echo "[2/4] Downloading Qwen2.5-VL-32B-Instruct-AWQ (~20GB)..."
-huggingface-cli download Qwen/Qwen2.5-VL-32B-Instruct-AWQ --cache-dir "$HF_CACHE_DIR"
+export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-1}
+mkdir -p "$MODEL_ROOT"
 
-# 3. Embedding Model: BGE-M3
-echo "[3/4] Downloading BAAI/bge-m3 (~2GB)..."
-huggingface-cli download BAAI/bge-m3 --cache-dir "$HF_CACHE_DIR"
+download_model() {
+    local repo_id="$1"
+    local target_dir="$2"
 
-# 4. Reranker Model: BGE-Reranker-v2-M3
-echo "[4/4] Downloading BAAI/bge-reranker-v2-m3 (~2GB)..."
-huggingface-cli download BAAI/bge-reranker-v2-m3 --cache-dir "$HF_CACHE_DIR"
+    echo "Downloading $repo_id"
+    echo "  -> $target_dir"
+    mkdir -p "$target_dir"
+    huggingface-cli download "$repo_id" --local-dir "$target_dir"
+}
 
-echo "========================================"
-echo "✅ All models downloaded successfully!"
-echo "You can now run: docker compose up -d"
-echo "========================================"
+download_model "Qwen/Qwen2.5-VL-7B-Instruct" "$MODEL_ROOT/Qwen2.5-VL-7B-Instruct"
+download_model "Qwen/Qwen2.5-VL-32B-Instruct-AWQ" "$MODEL_ROOT/Qwen2.5-VL-32B-Instruct-AWQ"
+download_model "BAAI/bge-m3" "$MODEL_ROOT/bge-m3"
+download_model "BAAI/bge-reranker-v2-m3" "$MODEL_ROOT/bge-reranker-v2-m3"
+
+echo ""
+echo "All required models are present under: $MODEL_ROOT"
+echo "Run the preflight next: bash scripts/validate-deployment.sh"

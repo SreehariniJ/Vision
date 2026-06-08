@@ -1,11 +1,10 @@
-import os
 from celery import Celery
 from app.config import settings
 
 celery_app = Celery(
     "vision_worker",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
     include=["app.tasks.ingest"]
 )
 

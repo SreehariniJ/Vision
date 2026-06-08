@@ -37,7 +37,7 @@ When a user uploads a document:
 2. Celery task triggered.
 3. Docling parses layout; PaddleOCR extracts text from images/scans.
 4. Text is chunked and embedded via the BGE-M3 service.
-5. Embeddings are stored in Qdrant; extracted entities/relationships are mapped into Neo4j.
+5. Embeddings are stored in Qdrant and chunk metadata is stored in MySQL. Neo4j is initialized for graph search and relationship enrichment when graph entities are available.
 
 ### Retrieval Pipeline (RAG)
 When a user asks a question:

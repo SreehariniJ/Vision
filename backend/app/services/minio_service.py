@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 from minio import Minio
 from app.config import settings
 
@@ -21,12 +22,24 @@ class MinioService:
         self._ensure_bucket()
 
     def _ensure_bucket(self):
-        try:
-            if not self.client.bucket_exists(self.bucket_name):
-                self.client.make_bucket(self.bucket_name)
-                logger.info(f"Created MinIO bucket: {self.bucket_name}")
-        except Exception as e:
-            logger.error(f"Failed to ensure MinIO bucket: {e}")
+        last_error = None
+        for attempt in range(1, 6):
+            try:
+                if not self.client.bucket_exists(self.bucket_name):
+                    self.client.make_bucket(self.bucket_name)
+                    logger.info(f"Created MinIO bucket: {self.bucket_name}")
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Failed to ensure MinIO bucket %s (attempt %s/5): %s",
+                    self.bucket_name,
+                    attempt,
+                    e,
+                )
+                time.sleep(2)
+
+        logger.error(f"Failed to ensure MinIO bucket after retries: {last_error}")
 
     def upload_file(self, object_name: str, file_data: bytes, content_type: str = "application/octet-stream") -> str:
         """Uploads a file to MinIO and returns the storage path."""

@@ -38,6 +38,7 @@ class VectorStore:
                 )
         except Exception as e:
             logger.error(f"Failed to ensure Qdrant collection: {e}")
+            raise
             
     async def search(self, query_vector: List[float], limit: int = 10, document_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search for similar vectors."""

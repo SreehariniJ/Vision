@@ -23,7 +23,8 @@ env/
 .env.production
 !.env.example
 !.env.profiles/*.env
-nginx/ssl/
+nginx/ssl/*
+!nginx/ssl/.gitkeep
 *.pem
 *.key
 *.crt

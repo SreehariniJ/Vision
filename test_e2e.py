@@ -1,40 +1,51 @@
-import requests
-import time
+import os
 import sys
+import time
+from pathlib import Path
 
-url_upload = "http://localhost:8000/v1/documents/upload"
-url_status = "http://localhost:8000/v1/documents/{}/status"
-url_search = "http://localhost:8000/v1/search/"
+import requests
 
-file_path = r"c:\Users\Sreeharini\vision\test_documents\2_Simple_Text.pdf"
 
-print("Uploading document...")
-with open(file_path, "rb") as f:
-    res = requests.post(url_upload, files={"file": f})
-    
-if res.status_code != 200:
-    print("Upload Failed:", res.text)
+base_url = os.environ.get("VISION_BASE_URL", "http://localhost:8000").rstrip("/")
+document_path = Path(os.environ.get("VISION_TEST_DOCUMENT", "test_documents/2_Simple_Text.pdf"))
+
+url_upload = f"{base_url}/v1/documents/upload"
+url_status = f"{base_url}/v1/documents/{{}}/status"
+url_search = f"{base_url}/v1/search/"
+
+if not document_path.exists():
+    print(f"Test document not found: {document_path}")
     sys.exit(1)
-    
-doc_id = res.json()["id"]
-print("Upload successful, Document ID:", doc_id)
 
-print("Polling status...")
-for i in range(30):
+print(f"Uploading document to {url_upload}")
+with document_path.open("rb") as file_handle:
+    response = requests.post(url_upload, files={"file": file_handle}, timeout=60)
+
+if response.status_code != 200:
+    print("Upload failed:", response.text)
+    sys.exit(1)
+
+document_id = response.json()["id"]
+print("Upload successful, document ID:", document_id)
+
+print("Polling ingestion status...")
+for _ in range(90):
     time.sleep(2)
-    s_res = requests.get(url_status.format(doc_id))
-    status = s_res.json()["status"]
+    status_response = requests.get(url_status.format(document_id), timeout=15)
+    status_response.raise_for_status()
+    status = status_response.json()["status"]
     print(f"Status: {status}")
-    if status == 'completed':
-        print("Processing complete!")
+    if status == "indexed":
+        print("Processing complete")
         break
-    elif status == 'error':
-        print("Processing failed!")
+    if status == "failed":
+        print("Processing failed:", status_response.json().get("error_message"))
         sys.exit(1)
 else:
-    print("Timeout waiting for processing")
+    print("Timeout waiting for document processing")
     sys.exit(1)
 
 print("Testing search...")
-res = requests.post(url_search, json={"query": "dummy", "limit": 2})
-print("Search Results:", res.json())
+response = requests.post(url_search, json={"query": "dummy", "limit": 2}, timeout=60)
+response.raise_for_status()
+print("Search results:", response.json())

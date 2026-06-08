@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     
     # Redis / Celery
     REDIS_URL: str = "redis://redis:6379/0"
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
+
+    @property
+    def celery_broker_url(self) -> str:
+        return self.CELERY_BROKER_URL or self.REDIS_URL
+
+    @property
+    def celery_result_backend(self) -> str:
+        return self.CELERY_RESULT_BACKEND or self.REDIS_URL
     
     # MinIO
     MINIO_ENDPOINT: str = "minio:9000"

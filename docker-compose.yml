@@ -1,5 +1,5 @@
 # ============================================================
-# Vision — Docker Compose (Production with GPU)
+# Vision - Docker Compose (Production with GPU)
 # ============================================================
 # Usage:
 #   docker compose up -d                    # Start all services
@@ -21,9 +21,9 @@ services:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro,z
+      - ./nginx/ssl:/etc/nginx/ssl:ro,z
     depends_on:
       openwebui:
         condition: service_started
@@ -33,7 +33,7 @@ services:
       - vision-net
 
   # --------------------------------------------------------
-  # Frontend — OpenWebUI (ChatGPT-style interface)
+  # Frontend - OpenWebUI (ChatGPT-style interface)
   # --------------------------------------------------------
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
@@ -58,7 +58,7 @@ services:
       - vision-net
 
   # --------------------------------------------------------
-  # Backend API — FastAPI
+  # Backend API - FastAPI
   # --------------------------------------------------------
   backend:
     build:
@@ -113,13 +113,15 @@ services:
       mysql:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
       neo4j:
-        condition: service_started
+        condition: service_healthy
+      neo4j-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
@@ -130,7 +132,7 @@ services:
       - vision-net
 
   # --------------------------------------------------------
-  # Celery Worker — Async Document Ingestion
+  # Celery Worker - Async Document Ingestion
   # --------------------------------------------------------
   celery-worker:
     build:
@@ -142,6 +144,7 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-change-me}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
       - EMBEDDING_URL=http://embedding:8003
       - DOCLING_URL=http://docling:8005
       - OCR_URL=http://ocr:8006
@@ -163,16 +166,32 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      neo4j-init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      docling:
+        condition: service_healthy
+      ocr:
+        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
       - vision-net
 
   # --------------------------------------------------------
-  # vLLM — Model Serving (GPU)
+  # vLLM - Model Serving (GPU)
   # --------------------------------------------------------
   vllm:
-    image: vllm/vllm-openai:latest
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.8.5.post1}
     container_name: vision-vllm
     restart: unless-stopped
     ports:
@@ -181,21 +200,29 @@ services:
       - .env.active-model
     environment:
       - HF_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
       - VLLM_USAGE_SOURCE=production
-    command: >
-      --host 0.0.0.0
-      --port 8001
-      --model ${VLLM_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
-      --dtype ${VLLM_DTYPE:-bfloat16}
-      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
-      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
-      --limit-mm-per-prompt ${VLLM_LIMIT_MM_PER_PROMPT:-image=4,video=2}
-      --trust-remote-code
-      --served-model-name vision-model
-      ${VLLM_QUANTIZATION:+--quantization ${VLLM_QUANTIZATION}}
-      ${VLLM_EXTRA_ARGS:-}
+      - VLLM_SERVED_MODEL_NAME=${VLLM_SERVED_MODEL_NAME:-vision-model}
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >
+        exec python3 -m vllm.entrypoints.openai.api_server
+        --host 0.0.0.0
+        --port 8001
+        --model "$${VLLM_MODEL:?VLLM_MODEL is not set. Run make switch-model PROFILE=A or B.}"
+        --dtype "$${VLLM_DTYPE:-bfloat16}"
+        --gpu-memory-utilization "$${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+        --max-model-len "$${VLLM_MAX_MODEL_LEN:-8192}"
+        --limit-mm-per-prompt "$${VLLM_LIMIT_MM_PER_PROMPT:-image=4,video=2}"
+        --trust-remote-code
+        --served-model-name "$${VLLM_SERVED_MODEL_NAME:-vision-model}"
+        $${VLLM_QUANTIZATION:+--quantization $${VLLM_QUANTIZATION}}
+        $${VLLM_EXTRA_ARGS:-}
     volumes:
-      - ${HF_HOME_HOST:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_ROOT:-./models}:/models:ro,z
+      - huggingface-cache:/root/.cache/huggingface
+    ipc: host
     deploy:
       resources:
         reservations:
@@ -224,12 +251,16 @@ services:
     ports:
       - "${EMBEDDING_PORT:-8003}:8003"
     environment:
-      - MODEL_NAME=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - MODEL_NAME=${EMBEDDING_MODEL:-/models/bge-m3}
       - DEVICE=${EMBEDDING_DEVICE:-cuda}
       - BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-32}
       - HF_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
+      - PYTHONUNBUFFERED=1
     volumes:
-      - ${HF_HOME_HOST:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_ROOT:-./models}:/models:ro,z
+      - huggingface-cache:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -258,12 +289,16 @@ services:
     ports:
       - "${RERANKER_PORT:-8004}:8004"
     environment:
-      - MODEL_NAME=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - MODEL_NAME=${RERANKER_MODEL:-/models/bge-reranker-v2-m3}
       - DEVICE=${RERANKER_DEVICE:-cuda}
       - TOP_K=${RERANKER_TOP_K:-5}
       - HF_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
+      - PYTHONUNBUFFERED=1
     volumes:
-      - ${HF_HOME_HOST:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_ROOT:-./models}:/models:ro,z
+      - huggingface-cache:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -281,7 +316,7 @@ services:
       - vision-net
 
   # --------------------------------------------------------
-  # Docling — Document Parsing Service
+  # Docling - Document Parsing Service
   # --------------------------------------------------------
   docling:
     build:
@@ -293,8 +328,7 @@ services:
       - "${DOCLING_PORT:-8005}:8005"
     environment:
       - OCR_URL=http://ocr:8006
-    volumes:
-      - docling-cache:/root/.cache
+      - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s
@@ -317,6 +351,7 @@ services:
       - "${OCR_PORT:-8006}:8006"
     environment:
       - OCR_LANG=${OCR_LANG:-en}
+      - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
       interval: 30s
@@ -342,7 +377,7 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-change-me}
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro,z
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -361,9 +396,15 @@ services:
     restart: unless-stopped
     ports:
       - "${QDRANT_PORT:-6333}:6333"
-      - "6334:6334"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - vision-net
 
@@ -382,7 +423,34 @@ services:
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
-      - ./scripts/init-neo4j.cypher:/var/lib/neo4j/import/init-neo4j.cypher:ro
+      - ./scripts/init-neo4j.cypher:/var/lib/neo4j/import/init-neo4j.cypher:ro,z
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u \"$${NEO4J_USER:-neo4j}\" -p \"$${NEO4J_PASSWORD:-change-me}\" 'RETURN 1' >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - vision-net
+
+  neo4j-init:
+    image: neo4j:5
+    container_name: vision-neo4j-init
+    restart: "no"
+    environment:
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-change-me}
+    volumes:
+      - ./scripts/init-neo4j.cypher:/init/init-neo4j.cypher:ro,z
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      cypher-shell -a bolt://neo4j:7687
+      -u "$${NEO4J_USER}"
+      -p "$${NEO4J_PASSWORD}"
+      -f /init/init-neo4j.cypher
+    depends_on:
+      neo4j:
+        condition: service_healthy
     networks:
       - vision-net
 
@@ -416,6 +484,12 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - vision-net
 
@@ -429,7 +503,7 @@ services:
     ports:
       - "${PROMETHEUS_PORT:-9091}:9090"
     volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -449,7 +523,7 @@ services:
       - GF_INSTALL_PLUGINS=grafana-clock-panel
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro,z
     depends_on:
       - prometheus
     networks:
@@ -462,7 +536,6 @@ volumes:
   openwebui-data:
   backend-data:
   huggingface-cache:
-  docling-cache:
   mysql-data:
   qdrant-data:
   neo4j-data:

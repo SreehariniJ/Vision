@@ -115,22 +115,22 @@ If the answer is not contained in the context, say "I don't have enough informat
         request_data["messages"] = messages
         request_data["stream"] = stream
         
+        url = f"{self.vllm_base_url}/chat/completions"
+
+        if stream:
+            async def stream_generator():
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    async with client.stream("POST", url, json=request_data) as response:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_raw():
+                            yield chunk
+
+            return stream_generator()
+
         async with httpx.AsyncClient(timeout=120.0) as client:
-            req = client.build_request(
-                "POST", 
-                f"{self.vllm_base_url}/chat/completions",
-                json=request_data
-            )
-            response = await client.send(req, stream=stream)
-            
-            if stream:
-                async def stream_generator():
-                    async for chunk in response.aiter_raw():
-                        yield chunk
-                return stream_generator()
-            else:
-                response.raise_for_status()
-                return response.json()
+            response = await client.post(url, json=request_data)
+            response.raise_for_status()
+            return response.json()
 
 # Singleton instance
 rag_pipeline = RAGPipeline()

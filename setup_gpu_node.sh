@@ -1,64 +1,58 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Convenience setup for a Linux GPU evaluation host.
+
+set -euo pipefail
 
 echo "=========================================================="
-echo " Vision GPU Node Setup Script"
+echo " Vision GPU Node Setup"
 echo "=========================================================="
 
-# Check if the user already has models downloaded
-if [ -z "$HF_HOME_HOST" ]; then
-    HF_HOME_HOST="$HOME/.cache/huggingface"
+if [[ ! -f .env ]]; then
+    cp .env.example .env
+    echo "Created .env from .env.example"
 fi
 
-echo "Checking for existing Hugging Face cache at: $HF_HOME_HOST"
+MODEL_ROOT=$(awk -F= '/^MODEL_ROOT=/{print $2}' .env | tail -n 1)
+MODEL_ROOT=${MODEL_ROOT:-./models}
+MODEL_ROOT=${MODEL_ROOT%\"}
+MODEL_ROOT=${MODEL_ROOT#\"}
+MODEL_ROOT=${MODEL_ROOT%\'}
+MODEL_ROOT=${MODEL_ROOT#\'}
+MODEL_ROOT=$(realpath -m "$MODEL_ROOT")
 
-if [ -d "$HF_HOME_HOST/hub" ] && [ "$(ls -A $HF_HOME_HOST/hub 2>/dev/null)" ]; then
-    echo ""
-    echo "✅ SUCCESS: Existing models found in $HF_HOME_HOST/hub!"
-    echo "If your guide already downloaded the models here, you DO NOT need to download them again."
-    echo "The system will use these models automatically."
-    echo ""
-    read -p "Do you want to run the downloader anyway to ensure all required models are present? (y/N) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Setup complete! You can now run: docker compose up -d"
-        exit 0
+echo "Model root: $MODEL_ROOT"
+
+required_dirs=(
+    "$MODEL_ROOT/Qwen2.5-VL-7B-Instruct"
+    "$MODEL_ROOT/Qwen2.5-VL-32B-Instruct-AWQ"
+    "$MODEL_ROOT/bge-m3"
+    "$MODEL_ROOT/bge-reranker-v2-m3"
+)
+
+missing=0
+for dir in "${required_dirs[@]}"; do
+    if [[ ! -d "$dir" ]]; then
+        echo "Missing model directory: $dir"
+        missing=1
     fi
-else
-    echo "No existing cache found. Proceeding with download..."
+done
+
+if [[ "$missing" -eq 1 ]]; then
+    echo ""
+    echo "The supplied model bundle was not found in the expected layout."
+    echo "Place it at $MODEL_ROOT, or set MODEL_ROOT in .env."
+    echo ""
+    read -r -p "Download models into this folder now? This requires internet access. [y/N] " reply
+    if [[ "$reply" =~ ^[Yy]$ ]]; then
+        MODEL_ROOT="$MODEL_ROOT" bash scripts/download-models.sh
+    else
+        echo "Setup stopped before download. Fix MODEL_ROOT/model placement and rerun."
+        exit 1
+    fi
 fi
 
-echo ""
-echo "Setting up high-speed downloader (hf_transfer)..."
-# Check for python/pip
-if ! command -v pip3 &> /dev/null; then
-    echo "❌ pip3 not found. Please install python3-pip first."
-    exit 1
-fi
-
-pip3 install -U "huggingface_hub[cli]" hf_transfer
-
-# Enable blazing fast rust-based downloads
-export HF_HUB_ENABLE_HF_TRANSFER=1
-export HF_HOME="$HF_HOME_HOST"
+bash scripts/validate-deployment.sh
 
 echo ""
-echo "Downloading Qwen2.5-VL-7B-Instruct (LLM)..."
-huggingface-cli download Qwen/Qwen2.5-VL-7B-Instruct
-
-echo ""
-echo "Downloading BAAI/bge-m3 (Embedding)..."
-huggingface-cli download BAAI/bge-m3
-
-echo ""
-echo "Downloading BAAI/bge-reranker-v2-m3 (Reranker)..."
-huggingface-cli download BAAI/bge-reranker-v2-m3
-
-echo ""
-echo "=========================================================="
-echo "✅ Setup Complete!"
-echo "All models are cached in: $HF_HOME_HOST"
-echo ""
-echo "You can now boot the system:"
-echo "docker compose up -d"
-echo "=========================================================="
+echo "Setup complete."
+echo "Start the stack with: docker compose up -d"

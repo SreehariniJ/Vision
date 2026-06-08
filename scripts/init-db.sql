@@ -1,5 +1,5 @@
 -- ============================================================
--- Vision — MySQL 8 Initialization Script
+-- Vision - MySQL 8 Initialization Script
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS vision CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

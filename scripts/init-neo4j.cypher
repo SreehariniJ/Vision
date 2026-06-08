@@ -1,5 +1,5 @@
 // ============================================================
-// Vision — Neo4j Initialization Script
+// Vision - Neo4j Initialization Script
 // ============================================================
 
 // --- Constraints (Unique IDs) ---

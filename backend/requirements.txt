@@ -18,7 +18,7 @@ alembic==1.13.1
 qdrant-client==1.8.2
 
 # Graph DB (Neo4j)
-neo4j==5.19.0
+neo4j==5.28.2
 
 # Redis & Celery
 redis==5.0.3
