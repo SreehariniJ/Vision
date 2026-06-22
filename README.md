@@ -4,46 +4,68 @@ Vision is a containerized multi-modal RAG system with OpenWebUI, FastAPI orchest
 
 The production deployment path is designed for RHEL/Fedora-family GPU hosts: Red Hat Enterprise Linux, Rocky Linux, AlmaLinux, and Fedora.
 
-## Fast Evaluation Path
+## Air-Gapped RHEL GPU Deployment Guide
 
-Prerequisites on the Linux GPU host:
+This guide provides the exact workflow to deploy the Vision RAG system when you have **one internet-connected RHEL system** and **one completely offline RHEL system with a GPU**.
 
-- Docker Engine with Docker Compose V2
-- NVIDIA driver working with `nvidia-smi`
-- NVIDIA Container Toolkit configured for Docker
-- A GPU with enough VRAM for the selected profile
-- Internet access for image pulls/build-time Python dependencies, unless images are prebuilt
+### Phase 1: On the INTERNET-CONNECTED RHEL System
+This system will download everything and package it into a transferable format.
 
-Place the supplied model bundle in this layout:
+1. **Clone the Repository**
+   ```bash
+   git clone https://github.com/SreehariniJ/Vision.git
+   cd Vision
+   ```
 
-```text
-vision/
-  models/
-    Qwen2.5-VL-7B-Instruct/
-    Qwen2.5-VL-32B-Instruct-AWQ/
-    bge-m3/
-    bge-reranker-v2-m3/
-```
+2. **Download the AI Models**
+   You need to download the models into the `models/` directory. You can do this manually or use the built-in downloader script:
+   ```bash
+   bash scripts/download-models.sh
+   ```
+   *Ensure that the `models/` folder contains the 4 model folders (Qwen 7B, Qwen 32B AWQ, bge-m3, and bge-reranker-v2-m3).*
 
-If the model folder is outside the project, set `MODEL_ROOT=/absolute/path/to/models` in `.env`.
+3. **Package the Docker Images**
+   You must build and package the microservices (like the Database, Redis, and APIs) into a single `.tar` file so they can be moved offline.
+   ```bash
+   bash scripts/export_offline_images_linux.sh
+   ```
+   *This will take 10-20 minutes. It will generate a massive file named `vision_images.tar` (approx 15 GB).*
 
-Run:
+4. **Prepare for Transfer**
+   Zip or package the entire `Vision` folder (which now contains the code, the `models/` folder, and the massive `vision_images.tar` file) and move it to a USB drive or SCP it to the offline system.
 
-```bash
-cd vision
-cp .env.example .env
-bash scripts/validate-deployment.sh
-make up
-```
+### Phase 2: On the OFFLINE RHEL GPU System
+This system must have **NVIDIA Drivers**, **Docker**, and the **NVIDIA Container Toolkit** installed.
 
-Open:
+1. **Unpack the Files**
+   Transfer the zipped folder to this machine, unzip it, and navigate into it:
+   ```bash
+   cd /path/to/Vision
+   ```
 
-- UI: `http://<host>:3000`
-- Backend health: `http://<host>:8000/api/health`
-- Backend readiness: `http://<host>:8000/api/ready`
-- Grafana: `http://<host>:3001`
+2. **Load the Docker Images**
+   Load the packaged `.tar` file directly into Docker. Because you do this, Docker will not attempt to reach the internet.
+   ```bash
+   bash scripts/load_offline_images.sh
+   ```
 
-The first OpenWebUI user to register becomes the admin user.
+3. **Validate and Start**
+   Run the setup script. It will run a pre-flight check to verify your GPU and models.
+   ```bash
+   make setup
+   ```
+
+   Once setup says `Preflight passed`, start the entire architecture:
+   ```bash
+   make up
+   ```
+
+   Wait 2 to 3 minutes for the heavy AI models to load into GPU VRAM.
+
+4. **Access the System**
+   Open a web browser and navigate to the IP address of your offline RHEL server:
+   - **Chat Interface:** `http://<IP>:3000`
+   - **Dashboards:** `http://<IP>:3001` (admin / change-me-grafana-password)
 
 ## Model Profiles
 
