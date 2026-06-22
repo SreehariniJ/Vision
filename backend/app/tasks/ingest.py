@@ -12,10 +12,43 @@ from app.models.document import Document, Chunk
 from app.services.minio_service import minio_service
 from app.services.embedding_service import embedding_service
 from app.services.vector_store import vector_store
+from app.services.graph_store import graph_store
 from app.utils.chunking import chunk_text
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+async def extract_entities_from_chunk(chunk_text: str) -> tuple:
+    """Uses local vLLM to extract entities and relationships for the Knowledge Graph."""
+    prompt = f"""
+You are an expert Knowledge Graph extractor. Extract entities and their relationships from the text below.
+Respond ONLY with a valid JSON object in this exact format:
+{{"entities": [{{"name": "...", "type": "Person/Organization/Concept"}}], "relationships": [{{"source": "...", "target": "...", "type": "..."}}]}}
+Text:
+{chunk_text}
+"""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.VLLM_BASE_URL}/chat/completions",
+                json={
+                    "model": "Qwen/Qwen2.5-VL-7B-Instruct", # Or the default local model
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                    "max_tokens": 1024
+                }
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            # Clean JSON if wrapped in markdown block
+            content = content.replace("```json", "").replace("```", "").strip()
+            import json
+            data = json.loads(content)
+            return data.get("entities", []), data.get("relationships", [])
+    except Exception as e:
+        logger.error(f"Entity extraction failed: {e}")
+        return [], []
+
 
 async def process_document_async(document_id: str):
     """Asynchronous core logic for document processing."""
@@ -100,6 +133,11 @@ async def process_document_async(document_id: str):
                     qdrant_id=chunk_id
                 )
             )
+            
+            # Extract and Insert Graph Data (Background parsing)
+            entities, relationships = await extract_entities_from_chunk(text)
+            if entities or relationships:
+                await graph_store.insert_document_graph(document_id, chunk_id, text, entities, relationships)
 
         # Upload to Qdrant
         await vector_store.client.upsert(

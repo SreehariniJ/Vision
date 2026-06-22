@@ -114,6 +114,7 @@ If the answer is not contained in the context, say "I don't have enough informat
         # Forward the augmented request to vLLM
         request_data["messages"] = messages
         request_data["stream"] = stream
+        request_data.setdefault("max_tokens", 8192)
         
         url = f"{self.vllm_base_url}/chat/completions"
 

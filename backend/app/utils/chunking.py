@@ -1,7 +1,7 @@
 import re
 from typing import List
 
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 4000, overlap: int = 200) -> List[str]:
     """
     Splits text into chunks of roughly `chunk_size` characters, 
     with an overlap of `overlap` characters to preserve context.

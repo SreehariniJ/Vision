@@ -24,6 +24,50 @@ class GraphStore:
             await self._driver.close()
             self._driver = None
             
+    async def insert_document_graph(self, document_id: str, chunk_id: str, chunk_text: str, entities: List[Dict[str, str]], relationships: List[Dict[str, str]]):
+        """
+        Inserts document chunks, entities, and relationships into Neo4j.
+        """
+        driver = await self.get_driver()
+        
+        query = """
+        // 1. Create Chunk
+        MERGE (c:Chunk {id: $chunk_id})
+        SET c.text = $chunk_text, c.document_id = $document_id
+        
+        // 2. Link Chunk to Document
+        MERGE (d:Document {id: $document_id})
+        MERGE (c)-[:CONTAINS]->(d)
+        
+        // 3. Create Entities and Links
+        WITH c
+        UNWIND $entities AS ent
+        MERGE (e:Entity {name: toLower(ent.name)})
+        SET e.type = ent.type
+        MERGE (c)-[:MENTIONS]->(e)
+        
+        // 4. Create Relationships
+        WITH c
+        UNWIND $relationships AS rel
+        MERGE (source:Entity {name: toLower(rel.source)})
+        MERGE (target:Entity {name: toLower(rel.target)})
+        MERGE (source)-[r:RELATED_TO]->(target)
+        SET r.description = rel.type
+        """
+        
+        try:
+            async with driver.session() as session:
+                await session.run(
+                    query, 
+                    chunk_id=chunk_id, 
+                    chunk_text=chunk_text, 
+                    document_id=document_id,
+                    entities=entities,
+                    relationships=relationships
+                )
+        except Exception as e:
+            logger.error(f"Failed to insert graph data: {e}")
+            
     async def search_related_entities(self, keywords: List[str], limit: int = 5) -> List[Dict[str, Any]]:
         """
         Find related entities and the documents/chunks that mention them based on keywords.

@@ -86,3 +86,5 @@ qdrant-data/
 
 # --- Redis data ---
 redis-data/
+*.zip
+*.tar
