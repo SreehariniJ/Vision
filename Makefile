@@ -60,9 +60,6 @@ health: ## Check backend health endpoint
 download-models: ## Download all required model weights into MODEL_ROOT
 	bash scripts/download-models.sh
 
-switch-model: ## Switch model profile: make switch-model PROFILE=A|B
-	bash scripts/switch-model.sh $(PROFILE)
-
 # --- Development (no GPU) ---
 
 dev: ## Start dev stack with mock LLM

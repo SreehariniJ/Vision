@@ -3,8 +3,6 @@
 # ============================================================
 # Usage:
 #   docker compose up -d                    # Start all services
-#   make switch-model PROFILE=A             # Switch to 7B model
-#   make switch-model PROFILE=B             # Switch to 32B AWQ
 # ============================================================
 
 name: vision
@@ -199,8 +197,6 @@ services:
     restart: unless-stopped
     ports:
       - "${VLLM_PORT:-8001}:8001"
-    env_file:
-      - .env.active-model
     environment:
       - HF_HOME=/root/.cache/huggingface
       - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
@@ -213,15 +209,14 @@ services:
         exec python3 -m vllm.entrypoints.openai.api_server
         --host 0.0.0.0
         --port 8001
-        --model "$${VLLM_MODEL:?VLLM_MODEL is not set. Run make switch-model PROFILE=A or B.}"
-        --dtype "$${VLLM_DTYPE:-bfloat16}"
-        --gpu-memory-utilization "$${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
-        --max-model-len "$${VLLM_MAX_MODEL_LEN:-8192}"
-        --limit-mm-per-prompt "$${VLLM_LIMIT_MM_PER_PROMPT:-image=4,video=2}"
+        --model /models/Qwen2.5-VL-32B-Instruct-AWQ
+        --dtype float16
+        --gpu-memory-utilization 0.90
+        --max-model-len 8192
+        --limit-mm-per-prompt image=4,video=2
         --trust-remote-code
         --served-model-name "$${VLLM_SERVED_MODEL_NAME:-vision-model}"
-        $${VLLM_QUANTIZATION:+--quantization $${VLLM_QUANTIZATION}}
-        $${VLLM_EXTRA_ARGS:-}
+        --quantization awq
     volumes:
       - ${MODEL_ROOT:-./models}:/models:ro,z
       - huggingface-cache:/root/.cache/huggingface
